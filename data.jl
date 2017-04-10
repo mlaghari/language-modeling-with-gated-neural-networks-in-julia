@@ -3,7 +3,7 @@ using Knet,AutoGrad,ArgParse,Compat
 function parse_commandline()
     s = ArgParseSettings()
     @add_arg_table s begin
-        ("--datafiles"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
+        ("--path"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
         # ("--generate"; arg_type=Int; default=500; help="If non-zero generate given number of characters.")
         # ("--hidden";  arg_type=Int; default=256; help="Sizes of one or more LSTM layers.")
         # ("--epochs"; arg_type=Int; default=3; help="Number of epochs for training.")
@@ -23,6 +23,7 @@ end
 function main(args=ARGS)
     opts = parse_commandline()
     println("opts=",[(k,v) for (k,v) in opts]...)
+    path = opts[:path]
     vocab = wordOccurences(path[1], 3)
 
     info("$(length(vocab)) unique chars.") # The output should be 65 for input.txt 
