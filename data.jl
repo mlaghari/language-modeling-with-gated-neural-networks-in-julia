@@ -1,21 +1,9 @@
-using Knet,AutoGrad,ArgParse,Compat
+using Knet,AutoGrad,ArgParse,Compat,Base
 
 function parse_commandline()
     s = ArgParseSettings()
     @add_arg_table s begin
         ("--path"; nargs='+'; help="If provided, use first file for training, second for dev, others for test.")
-        # ("--generate"; arg_type=Int; default=500; help="If non-zero generate given number of characters.")
-        # ("--hidden";  arg_type=Int; default=256; help="Sizes of one or more LSTM layers.")
-        # ("--epochs"; arg_type=Int; default=3; help="Number of epochs for training.")
-        # ("--batchsize"; arg_type=Int; default=100; help="Number of sequences to train on in parallel.")
-        # ("--seqlength"; arg_type=Int; default=25; help="Number of steps to unroll the network for.")
-        # ("--decay"; arg_type=Float64; default=0.9; help="Learning rate decay.")
-        # ("--lr"; arg_type=Float64; default=1e-1; help="Initial learning rate.")
-        # ("--gclip"; arg_type=Float64; default=3.0; help="Value to clip the gradient norm at.")
-        # ("--winit"; arg_type=Float64; default=0.1; help="Initial weights set to winit*randn().")
-        # ("--gcheck"; arg_type=Int; default=0; help="Check N random gradients.")
-        # ("--seed"; arg_type=Int; default=38; help="Random number seed.")
-        # ("--atype"; default=(gpu()>=0 ? "KnetArray{Float32}" : "Array{Float32}"); help="array type: Array for cpu, KnetArray for gpu")
     end
     return parse_args(s;as_symbols = true)        
 end
@@ -24,19 +12,44 @@ function main(args=ARGS)
     opts = parse_commandline()
     println("opts=",[(k,v) for (k,v) in opts]...)
     path = opts[:path]
-    vocab = wordOccurences(path[1], 3)
+    directory = path[1]
+    batchSize = 64
+    contextSize = 20
+    filterHeight = 5
+    vocabSize = 2000
+    
+    # Reading and preparing data
+    words = readWords(directory, contextSize, filterHeight)
+    wordCounts = createVocabulary(words)
+    data, wordToIndex, indexToWord = indexing(wordCounts, vocabSize-1)
+    x_batches, y_batches = createBatches(data, batchSize, contextSize)
 
-    info("$(length(vocab)) unique chars.") # The output should be 65 for input.txt 
+    # Adding Model GCNN
+    
+    
+    # println(length(x_batches[1]))
+    # println(size(y_batches))
+    # vocab = wordOccurences(path[1], contextSize, filterHeight)
+    # vocab1 = indexing(vocab, vocabSize)
+    # # printVocab(vocab)
+    # x_batches, y_batches = createBatches(vocab1, batchSize, contextSize)
+    # # println(size(y_batches))
+    # println(x_batches)
+    # println(y_batches)
+    info("$(length(words)) unique chars.")
 end
 
+function getFirstNElem(vocab, nElements)
+    return sort(collect(vocab), by = tuple -> last(tuple), rev=true)[1:nElements]
+end
 
-function createVocabulary(tokens)
-    vocab = Dict{AbstractString,Int}()
-    for token in tokens
-        vocab[token] = get(vocab, token, 0) + 1
+function printVocab(vocab)
+    for (token, count) in vocab
+        println(token, " ==> ", count)
     end
-    return vocab
 end
+
+
 
 # Cummulative tokens of all files in a directory
 function createTokens(directory)
@@ -51,12 +64,22 @@ function createTokens(directory)
     return tokens
 end
 
-# Creating specialized vocabulary for Google Billion Words
-function tokensForGBW(directory, contextSize)
+# Count for each word in all the sentences
+function createVocabulary(tokens)
+    vocab = Dict{AbstractString,Int}()
+    for token in tokens
+        vocab[token] = get(vocab, token, 0) + 1
+    end
+    return vocab
+end
+
+# Creating specialized vocabulary for Google Billion Words. Returns sentences(words) by appending "<s>", "</s>" and "unknwon" tokens
+function readWords(directory, contextSize, filterHeight)
     words = Any[]
     start = ["<s>"]
     ending = ["</s>"]
-    unknown = ["<unknown>"]
+    unknown = ["<unk>"]
+    pad = "<pad>"
     files = readdir(directory)
     # println(files)
     for file in files
@@ -64,29 +87,99 @@ function tokensForGBW(directory, contextSize)
         lines = readlines(f)
         for line in lines
             tokens = split(line)
-            # if len(tokens) == contextSize-2
+            if length(tokens) == contextSize-2
+                padding = pad ^ trunc(Int64, (filterHeight/2))
+                padNumber = Any[]
+                push!(padNumber, padding)
                 prepend!(tokens, start)
-                append!(tokens, ending)
-                append!(tokens, unknown)
+                prepend!(tokens, padNumber)
+                append!(tokens, ending) 
                 append!(words, tokens)
-            # end
+            end
         end
         close(f)
     end
     return words
 end
 
-# Counting word occurences
-function wordOccurences(directory, limit)
-    words = tokensForGBW(directory, -1)
+# Counting word occurences. Returns Dictionary of Vocabulary i.e. tokens and their counts
+function wordOccurences(directory, contextSize, filterHeight)
+    words = readWords(directory, contextSize, filterHeight)
     vocab = createVocabulary(words)
     for (token,count) in vocab
-        if token != "<s>" && token != "</s>" && token != "<unknown>" && vocab[token] < limit
-            get(vocab, "<unknown>", 0) + 1
+        if token != "<s>" && token != "</s>" && token != "<unk>" && token != "<pad>" && vocab[token] < contextSize
+            get(vocab, "<unk>", 0) + 1
             delete!(vocab, token)
         end
     end
+    println(vocab)
     return vocab
+end
+
+# Indexing Words
+function indexing(words, nElements)
+    selectedWords = getFirstNElem(words, nElements)
+    wordToIndex = Dict{AbstractString,Int64}()
+    indexToWord = Dict{Int64,AbstractString}()
+    wordToIndex["<unk>"] = 0
+    indexToWord[0] = "<unk>"
+    counter = 1
+    for i in enumerate(selectedWords)
+        wordToIndex[selectedWords[counter][1]] = counter+1
+        indexToWord[counter+1] = selectedWords[counter][1]
+        counter = counter + 1
+    end
+    data = []
+    for word in keys(words)
+        idx = get(wordToIndex, word, -1)
+        if (idx == -1)
+            idx = wordToIndex["<unk>"]
+        else 
+            idx = idx
+        end
+        push!(data, idx)
+    end
+    return data, wordToIndex, indexToWord
+end
+
+# Creating Batches
+function createBatches(data, batchSize, contextSize)
+    x_batches = Any[]
+    y_batches = Any[]
+
+    numBatches = length(data) / (batchSize * contextSize)
+    numBatches = trunc(Int64, numBatches)
+    data = data[1:(numBatches * batchSize * contextSize)]
+    xdata = copy(data)
+    ydata = deepcopy(data)
+
+    ydata[end] = xdata[1]
+    ydata[1] = xdata[end]
+    
+    for i in 1:numBatches
+        x_batch = xdata[i:batchSize:end]
+        y_batch = ydata[i:batchSize:end]
+        push!(x_batches, x_batch)
+        push!(y_batches, y_batch)
+    end
+    # println(x_batches[1])
+    # println(x_batches[2])
+    
+    for i in 1:numBatches
+        x_batches[i] = x_batches[i][1:end-1]
+        y_batches[i] = y_batches[i][1:end-1]
+    end
+    return x_batches, y_batches
+end
+
+function getBatches(x_batches, y_batches, batchID)
+    x = x_batches[batchID]
+    y = y_batches[batchID]
+    batchID = batchID + 1
+    if batchID > length(x_batches)
+        batchID = 0
+    end
+    return x, reshape(y,1,size(x)), batchID
 end
 
 main()
