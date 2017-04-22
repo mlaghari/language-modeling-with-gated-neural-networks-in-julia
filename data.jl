@@ -13,17 +13,21 @@ function main(args=ARGS)
     println("opts=",[(k,v) for (k,v) in opts]...)
     path = opts[:path]
     directory = path[1]
-    batchSize = 64
-    contextSize = 20
-    filterHeight = 5
-    vocabSize = 2000 # change it to 2000 when using complete dataset
+    batchSize = 64          # Batch size of data while training
+    contextSize = 20        # Length of sentence/context
+    filterHeight = 5        # Height of the CNN filter
+    vocabSize = 2000        # change it to 2000 when using complete dataset
+    embeddingSize = 200     # embedding size of each token
     
     # Reading and preparing data
     words = readWords(directory, contextSize, filterHeight)
     wordCounts = createVocabulary(words)
-    data, wordToIndex, indexToWord = indexing(wordCounts, vocabSize-1)
-    # println(wordToIndex["<s>"])
+    data, wordToIndex, indexToWord, sortedIdToWord = indexing(wordCounts, vocabSize-1)
     x_batches, y_batches = createBatches(data, batchSize, contextSize)
+
+    # Embedding Matrix initialization
+    embeddingMatrix = createEmbeddings(sortedIdToWord, embeddingSize)
+    println(size(embeddingMatrix))
 
     # Adding Model GCNN
     
@@ -39,8 +43,6 @@ function printVocab(vocab)
         println(token, " ==> ", count)
     end
 end
-
-
 
 # Cummulative tokens of all files in a directory
 function createTokens(directory)
@@ -108,20 +110,32 @@ end
 
 # Indexing Words
 function indexing(words, nElements)
+    # selectedWords is a 2d array, Array{AbstractString,Int64} containing 
+    # the words and its counts
     selectedWords = getFirstNElem(words, nElements)
     wordToIndex = Dict{AbstractString,Int64}()
     indexToWord = Dict{Int64,AbstractString}()
-    wordToIndex["<unk>"] = 0
-    indexToWord[0] = "<unk>"
+    sortedIndexToWord = Dict{Int64,AbstractString}()
+    data = []
+    
+    wordToIndex["<unk>"] = 1
+    indexToWord[1] = "<unk>"
     counter = 1
-    println(typeof(selectedWords))
     for i in enumerate(selectedWords)
-        # println(selectedWords[counter][1])
         wordToIndex[selectedWords[counter][1]] = counter+1
         indexToWord[counter+1] = selectedWords[counter][1]
         counter = counter + 1
     end
-    data = []
+    
+    for key in sort(collect(keys(indexToWord)))
+        # println("$key => $(indexToWord[key])")
+        sortedIndexToWord[key] = indexToWord[key]
+    end
+    
+    # Creating the input text into ID form. The sequence is in the form of 
+    # original texts. However, the words are replaced with IDx. If a word does 
+    # not match an ID, (i.e. if a word is not in the threshold of nElements [in selectedWords])
+    # then that word is given the ID 1, i.e. the word is known as "<unk>".
     for word in keys(words)
         idx = get(wordToIndex, word, -1)
         if (idx == -1)
@@ -131,7 +145,8 @@ function indexing(words, nElements)
         end
         push!(data, idx)
     end
-    return data, wordToIndex, indexToWord
+
+    return data, wordToIndex, indexToWord, sortedIndexToWord
 end
 
 # Creating Batches
@@ -166,6 +181,7 @@ function createBatches(data, batchSize, contextSize)
     return x_batches, y_batches
 end
 
+# Get a particular batch according to BatchID
 function getBatches(x_batches, y_batches, batchID)
     x = x_batches[batchID]
     y = y_batches[batchID]
@@ -174,6 +190,17 @@ function getBatches(x_batches, y_batches, batchID)
         batchID = 0
     end
     return x, reshape(y,1,size(x)), batchID
+end
+
+# Create Embeddings
+function createEmbeddings(indexToWord, embeddingSize)
+    embeddingMatrix = Array{Int64, Array{Float64,2}} # fix this
+    for wordId in keys(indexToWord)
+        embedding = randn(embeddingSize, 1)
+        embeddingMatrix[wordId] = embedding
+        # append!(embeddingMatrix, embedding)
+    end
+    return embeddingMatrix
 end
 
 main()
