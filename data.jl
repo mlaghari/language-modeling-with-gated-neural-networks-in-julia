@@ -16,26 +16,17 @@ function main(args=ARGS)
     batchSize = 64
     contextSize = 20
     filterHeight = 5
-    vocabSize = 2000
+    vocabSize = 2000 # change it to 2000 when using complete dataset
     
     # Reading and preparing data
     words = readWords(directory, contextSize, filterHeight)
     wordCounts = createVocabulary(words)
     data, wordToIndex, indexToWord = indexing(wordCounts, vocabSize-1)
+    # println(wordToIndex["<s>"])
     x_batches, y_batches = createBatches(data, batchSize, contextSize)
 
     # Adding Model GCNN
     
-    
-    # println(length(x_batches[1]))
-    # println(size(y_batches))
-    # vocab = wordOccurences(path[1], contextSize, filterHeight)
-    # vocab1 = indexing(vocab, vocabSize)
-    # # printVocab(vocab)
-    # x_batches, y_batches = createBatches(vocab1, batchSize, contextSize)
-    # # println(size(y_batches))
-    # println(x_batches)
-    # println(y_batches)
     info("$(length(words)) unique chars.")
 end
 
@@ -81,7 +72,6 @@ function readWords(directory, contextSize, filterHeight)
     unknown = ["<unk>"]
     pad = "<pad>"
     files = readdir(directory)
-    # println(files)
     for file in files
         f = open(string(directory,"/",file))
         lines = readlines(f)
@@ -124,7 +114,9 @@ function indexing(words, nElements)
     wordToIndex["<unk>"] = 0
     indexToWord[0] = "<unk>"
     counter = 1
+    println(typeof(selectedWords))
     for i in enumerate(selectedWords)
+        # println(selectedWords[counter][1])
         wordToIndex[selectedWords[counter][1]] = counter+1
         indexToWord[counter+1] = selectedWords[counter][1]
         counter = counter + 1
@@ -151,6 +143,8 @@ function createBatches(data, batchSize, contextSize)
     numBatches = trunc(Int64, numBatches)
     data = data[1:(numBatches * batchSize * contextSize)]
     xdata = copy(data)
+    # println(length(data))
+    # println(batchSize*contextSize)
     ydata = deepcopy(data)
 
     ydata[end] = xdata[1]
