@@ -13,11 +13,12 @@ function main(args=ARGS)
     println("opts=",[(k,v) for (k,v) in opts]...)
     path = opts[:path]
     directory = path[1]
-    batchSize = 64          # Batch size of data while training
-    contextSize = 20        # Length of sentence/context
-    filterHeight = 5        # Height of the CNN filter
-    vocabSize = 2000        # change it to 2000 when using complete dataset
-    embeddingSize = 200     # embedding size of each token
+    batchSize = 64                                  # Batch size of data while training
+    filterHeight = 5                                # Height of the CNN filter
+    contextSize = 20 + trunc(Int64, filterHeight/2) # Length of sentence/context
+    vocabSize = 2000                                # change it to 2000 when using complete dataset
+    embeddingSize = 200                             # embedding size of each token
+    filterWidth = embeddingSize                     # Width of the filter
     
     # Reading and preparing data
     words = readWords(directory, contextSize, filterHeight)
@@ -27,7 +28,7 @@ function main(args=ARGS)
 
     # Embedding Matrix initialization
     embeddingMatrix = createEmbeddings(sortedIdToWord, embeddingSize)
-    println(size(embeddingMatrix))
+    println(embeddingMatrix[1])
 
     # Adding Model GCNN
     
@@ -194,13 +195,18 @@ end
 
 # Create Embeddings
 function createEmbeddings(indexToWord, embeddingSize)
-    embeddingMatrix = Array{Int64, Array{Float64,2}} # fix this
+    embeddingMatrix = Any[]
     for wordId in keys(indexToWord)
         embedding = randn(embeddingSize, 1)
-        embeddingMatrix[wordId] = embedding
-        # append!(embeddingMatrix, embedding)
+        embedding = transpose(embedding)
+        push!(embeddingMatrix, embedding)
     end
     return embeddingMatrix
+end
+
+# Create Weights and biasses
+function initParams(k, m, n)
+    # w = Any[(randn())]
 end
 
 main()
