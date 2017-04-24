@@ -23,12 +23,11 @@ function main(args=ARGS)
     # Reading and preparing data
     words = readWords(directory, contextSize, filterHeight)
     wordCounts = createVocabulary(words)
-    data, wordToIndex, indexToWord, sortedIdToWord = indexing(wordCounts, vocabSize-1)
+    data, wordToIndex, indexToWord, sortedIdToWord = indexing(words, wordCounts, vocabSize-1)
     x_batches, y_batches = createBatches(data, batchSize, contextSize)
 
     # Embedding Matrix initialization
     embeddingMatrix = createEmbeddings(sortedIdToWord, embeddingSize)
-    println(embeddingMatrix[1])
 
     # Adding Model GCNN
     
@@ -72,7 +71,6 @@ function readWords(directory, contextSize, filterHeight)
     words = Any[]
     start = ["<s>"]
     ending = ["</s>"]
-    unknown = ["<unk>"]
     pad = "<pad>"
     files = readdir(directory)
     for file in files
@@ -81,9 +79,11 @@ function readWords(directory, contextSize, filterHeight)
         for line in lines
             tokens = split(line)
             if length(tokens) == contextSize-2
-                padding = pad ^ trunc(Int64, (filterHeight/2))
+                padding = trunc(Int64, (filterHeight/2))
                 padNumber = Any[]
-                push!(padNumber, padding)
+                for p in 1:padding
+                    push!(padNumber, pad)
+                end
                 prepend!(tokens, start)
                 prepend!(tokens, padNumber)
                 append!(tokens, ending) 
@@ -92,6 +92,7 @@ function readWords(directory, contextSize, filterHeight)
         end
         close(f)
     end
+    # println(length(words))
     return words
 end
 
@@ -110,7 +111,7 @@ function wordOccurences(directory, contextSize, filterHeight)
 end
 
 # Indexing Words
-function indexing(words, nElements)
+function indexing(totalWords, words, nElements)
     # selectedWords is a 2d array, Array{AbstractString,Int64} containing 
     # the words and its counts
     selectedWords = getFirstNElem(words, nElements)
@@ -137,7 +138,8 @@ function indexing(words, nElements)
     # original texts. However, the words are replaced with IDx. If a word does 
     # not match an ID, (i.e. if a word is not in the threshold of nElements [in selectedWords])
     # then that word is given the ID 1, i.e. the word is known as "<unk>".
-    for word in keys(words)
+    # println(length(totalWords))
+    for word in totalWords
         idx = get(wordToIndex, word, -1)
         if (idx == -1)
             idx = wordToIndex["<unk>"]
@@ -146,7 +148,7 @@ function indexing(words, nElements)
         end
         push!(data, idx)
     end
-
+    # println(length(data))
     return data, wordToIndex, indexToWord, sortedIndexToWord
 end
 
@@ -158,26 +160,35 @@ function createBatches(data, batchSize, contextSize)
     numBatches = length(data) / (batchSize * contextSize)
     numBatches = trunc(Int64, numBatches)
     data = data[1:(numBatches * batchSize * contextSize)]
+    
     xdata = copy(data)
-    # println(length(data))
-    # println(batchSize*contextSize)
     ydata = deepcopy(data)
 
     ydata[end] = xdata[1]
     ydata[1] = xdata[end]
     
+    start = 0
+    iter = 1
     for i in 1:numBatches
-        x_batch = xdata[i:batchSize:end]
-        y_batch = ydata[i:batchSize:end]
+        x_batch = Any[]
+        y_batch = Any[]
+        for j in 1:batchSize
+            x_sentence = xdata[start+1:start+contextSize]
+            y_sentence = ydata[start+1:start+contextSize]
+            push!(x_batch, x_sentence)
+            push!(y_batch, y_sentence)
+            start = iter*contextSize
+            iter += 1
+        end
         push!(x_batches, x_batch)
         push!(y_batches, y_batch)
     end
-    # println(x_batches[1])
-    # println(x_batches[2])
-    
+
     for i in 1:numBatches
-        x_batches[i] = x_batches[i][1:end-1]
-        y_batches[i] = y_batches[i][1:end-1]
+        for j in 1:batchSize
+            x_batches[i][j] = x_batches[i][j][1:end-1]
+            y_batches[i][j] = y_batches[i][j][1:end-1]
+        end
     end
     return x_batches, y_batches
 end
