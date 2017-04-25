@@ -15,7 +15,7 @@ function main(args=ARGS)
     directory = path[1]
     batchSize = 64                                  # Batch size of data while training
     filterHeight = 5                                # Height of the CNN filter
-    contextSize = 20 + trunc(Int64, filterHeight/2) # Length of sentence/context
+    contextSize = 22 + trunc(Int64, filterHeight/2) # Length of sentence/context 20=sentence + 2=<s></s> + trunc(Int64, filterHeight/2)
     vocabSize = 2000                                # change it to 2000 when using complete dataset
     embeddingSize = 200                             # embedding size of each token
     filterWidth = embeddingSize                     # Width of the filter
@@ -32,38 +32,6 @@ function main(args=ARGS)
     # Adding Model GCNN
     
     info("$(length(words)) unique chars.")
-end
-
-function getFirstNElem(vocab, nElements)
-    return sort(collect(vocab), by = tuple -> last(tuple), rev=true)[1:nElements]
-end
-
-function printVocab(vocab)
-    for (token, count) in vocab
-        println(token, " ==> ", count)
-    end
-end
-
-# Cummulative tokens of all files in a directory
-function createTokens(directory)
-    tokens = []
-    files = readdir(directory)
-    for file in files
-        f = open(file)
-        content = readstring(f)
-        push!(tokens, split(content))
-        close(f)
-    end
-    return tokens
-end
-
-# Count for each word in all the sentences
-function createVocabulary(tokens)
-    vocab = Dict{AbstractString,Int}()
-    for token in tokens
-        vocab[token] = get(vocab, token, 0) + 1
-    end
-    return vocab
 end
 
 # Creating specialized vocabulary for Google Billion Words. Returns sentences(words) by appending "<s>", "</s>" and "unknwon" tokens
@@ -92,21 +60,15 @@ function readWords(directory, contextSize, filterHeight)
         end
         close(f)
     end
-    # println(length(words))
     return words
 end
 
-# Counting word occurences. Returns Dictionary of Vocabulary i.e. tokens and their counts
-function wordOccurences(directory, contextSize, filterHeight)
-    words = readWords(directory, contextSize, filterHeight)
-    vocab = createVocabulary(words)
-    for (token,count) in vocab
-        if token != "<s>" && token != "</s>" && token != "<unk>" && token != "<pad>" && vocab[token] < contextSize
-            get(vocab, "<unk>", 0) + 1
-            delete!(vocab, token)
-        end
+# Count for each word in all the sentences
+function createVocabulary(tokens)
+    vocab = Dict{AbstractString,Int}()
+    for token in tokens
+        vocab[token] = get(vocab, token, 0) + 1
     end
-    println(vocab)
     return vocab
 end
 
@@ -130,7 +92,6 @@ function indexing(totalWords, words, nElements)
     end
     
     for key in sort(collect(keys(indexToWord)))
-        # println("$key => $(indexToWord[key])")
         sortedIndexToWord[key] = indexToWord[key]
     end
     
@@ -148,8 +109,96 @@ function indexing(totalWords, words, nElements)
         end
         push!(data, idx)
     end
-    # println(length(data))
     return data, wordToIndex, indexToWord, sortedIndexToWord
+end
+
+# Create Embeddings
+function createEmbeddings(indexToWord, embeddingSize)
+    embeddingMatrix = Any[]
+    for wordId in keys(indexToWord)
+        embedding = randn(1, embeddingSize)
+        push!(embeddingMatrix, embedding)
+    end
+    return embeddingMatrix
+end
+
+# Create Weights and biasses
+# h(X) = (X * W + b) .* sigm(X * V + c)
+# W = w[1], b = w[2], V = w[3], c = w[4]
+function initWeights(k, embeddingSize, winit, vocabSize)
+    w = Any[(randn(Float32, k,1,embeddingSize,embeddingSize)*winit), zeros(Float32, 1,1,embeddingSize,1)
+            (randn(Float32, k,1,embeddingSize,embeddingSize)*winit), zeros(Float32, 1,1,embeddingSize,1)
+            (randn(Float32, embeddingSize,vocabSize)*winit), zeros(Float32, 1,vocabSize)]
+    return w
+end
+
+# Hidden Layers
+function hiddenLayers(weights, input)
+    conv_w = conv4(weights[1], inputs, padding=2)
+    conv_v = conv4(weights[3], inputs, padding=2)
+    out = (conv_w .+ weights[2]) .* sigm(conv_v .+ weights[4])
+    return out
+end
+
+# Hidden Layers
+function predict(weights, input, numLayers)
+    out = input
+    for i in 1:numLayers
+        out = hiddenLayers(weights, out)
+    end
+    
+    # TODO: fully connected
+    
+
+
+    return out
+end
+
+# Loss function (softmax)
+# Should be adaptive softmax according to the paper
+function loss(weights, input, ygold, numLayers)
+    ypred = predict(weights, input, numLayers)
+    ynorm = logp(ypred, 1)
+    y = -sum(ygold .* ynorm)/size(ygold, 1)
+    return y
+end
+
+lossgradient = grad(loss)
+
+function train()
+    for (x,y) in dtrn
+        loss_grad = lossgradient(w,convert(KnetArray{Float32},x),convert(KnetArray{Float32},y))
+        x = convert(KnetArray{Float32}, x)
+        opts = map(x->Adam(), w)
+        update!(w, loss_grad, opts)
+        for k in 1:length(w)
+            w[k] = w[k] - (lr * loss_grad[k])
+        end 
+    end
+end
+
+# Utility functions
+function printVocab(vocab)
+    for (token, count) in vocab
+        println(token, " ==> ", count)
+    end
+end
+
+function getFirstNElem(vocab, nElements)
+    return sort(collect(vocab), by = tuple -> last(tuple), rev=true)[1:nElements]
+end
+
+# Cummulative tokens of all files in a directory
+function createTokens(directory)
+    tokens = []
+    files = readdir(directory)
+    for file in files
+        f = open(file)
+        content = readstring(f)
+        push!(tokens, split(content))
+        close(f)
+    end
+    return tokens
 end
 
 # Creating Batches
@@ -202,22 +251,6 @@ function getBatches(x_batches, y_batches, batchID)
         batchID = 0
     end
     return x, reshape(y,1,size(x)), batchID
-end
-
-# Create Embeddings
-function createEmbeddings(indexToWord, embeddingSize)
-    embeddingMatrix = Any[]
-    for wordId in keys(indexToWord)
-        embedding = randn(embeddingSize, 1)
-        embedding = transpose(embedding)
-        push!(embeddingMatrix, embedding)
-    end
-    return embeddingMatrix
-end
-
-# Create Weights and biasses
-function initParams(k, m, n)
-    # w = Any[(randn())]
 end
 
 main()
