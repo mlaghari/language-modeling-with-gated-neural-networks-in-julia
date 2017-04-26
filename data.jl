@@ -34,9 +34,14 @@ function main(args=ARGS)
 
     # Adding Model GCNN
     w = initWeights(filterWidth, embeddingSize, 0.01, vocabSize)
-    for i in 1:size(x_batches, 1)
-        w = train(w, x_batches[i], y_batches[i], gradientClip, embeddingMatrix, vocabSize, numHiddenLayers)
+    # y = loss(w, x_batches[1][1], y_batches[1][1], numHiddenLayers)
+    # println(size(x_batches, 1))
+    for i in 1:1 #size(x_batches, 1)
+        w = train(w, x_batches[i], y_batches[i], gradientClip, embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize)
     end
+    println(size(w))
+    cor, inst = accuracy(w, x_batches[2], y_batches[2], embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize)
+    println(cor, " ", inst, " ", cor/inst)
 
 end
 
@@ -170,7 +175,7 @@ function createBatches(data, batchSize, contextSize, idToWords)
     # for i in 1:(contextSize+3)
     #     println(idToWords[x_batches[1][1][i]], " ==> ", idToWords[y_batches[1][1][i]])
     # end
-    println(size(x_batches), " ", size(x_batches[1]), " ", size(x_batches[1][1]))
+    println("Batch config: NumBatches x BatchSize x SentenceLength = ", size(x_batches), " ", size(x_batches[1]), " ", size(x_batches[1][1]))
     return x_batches, y_batches
 end
 
@@ -181,6 +186,7 @@ function createEmbeddings(indexToWord, embeddingSize)
         embedding = randn(1, embeddingSize)
         push!(embeddingMatrix, embedding)
     end
+    # println(size(embeddingMatrix)...)
     return embeddingMatrix
 end
 
@@ -188,17 +194,18 @@ end
 # h(X) = (X * W + b) .* sigm(X * V + c)
 # W = w[1], b = w[2], V = w[3], c = w[4]
 function initWeights(k, embeddingSize, winit, vocabSize)
-    w = Any[KnetArray{Float32}(randn(Float32, k,1,embeddingSize,embeddingSize)*winit), KnetArray{Float32}(zeros(Float32, 1,1,embeddingSize,1)),
-            KnetArray{Float32}(randn(Float32, k,1,embeddingSize,embeddingSize)*winit), KnetArray{Float32}(zeros(Float32, 1,1,embeddingSize,1)),
-            KnetArray{Float32}(randn(Float32, embeddingSize,vocabSize)*winit), KnetArray{Float32}(zeros(Float32, 1,vocabSize))]
-    # return map(t->convert(KnetArray{Float32}, t), w)
-    return w
+    w = Any[(randn(Float32, k,1,embeddingSize,embeddingSize)*winit), (zeros(Float32, 1,1,embeddingSize,1)),
+            (randn(Float32, k,1,embeddingSize,embeddingSize)*winit), (zeros(Float32, 1,1,embeddingSize,1)),
+            (randn(Float32, embeddingSize,vocabSize)*winit), (zeros(Float32, 1,vocabSize))]
+    return map(t->convert(KnetArray{Float32}, t), w)
+    # return w
 end
 
 # Hidden Layers
 function hiddenLayers(weights, inputs)
-    conv_w = conv4(convert(KnetArray{Float32}, weights[1]), convert(KnetArray{Float32}, inputs), padding=2)
-    conv_v = conv4(convert(KnetArray{Float32}, weights[3]), convert(KnetArray{Float32}, inputs), padding=2)
+    conv_w = conv4(weights[1], inputs, padding=(2, 0))
+    conv_v = conv4(weights[3], inputs, padding=(2, 0))
+    # println(size(conv_w), " ", size(conv_v))
     out = (conv_w .+ weights[2]) .* sigm(conv_v .+ weights[4])
     return out
 end
@@ -207,15 +214,22 @@ end
 function predict(weights, input, numLayers)
     out = input
     for i in 1:numLayers-1
-        out = hiddenLayers(weights[i], out)
+        out = hiddenLayers(weights, out)
     end
-    
+
+    out_reshaped = reshape(out, size(out, 1)*size(out, 2)*size(out, 3), 1, 1, 1)
+    # println(typeof(out_reshaped))
 
     # TODO: fully connected
     sentences = Any[]
     for i in 1:size(out, 1)
-        a = out[i,1,:]
-        fully = a*w[5] .+ w[6]
+        a = Any[]               # embeddingSize=200
+        for j in 0:199          # embeddingSize=200
+            a = vcat(a, out_reshaped[1+(j*27)])
+        end
+        a = convert(KnetArray{Float32}, a)
+        a = reshape(a, 1, 200)
+        fully = a * weights[5] .+ weights[6]
         push!(sentences, fully)
     end
 
@@ -230,7 +244,7 @@ function loss(weights, input, ygold, numLayers)
     for i in 1:size(ygold, 1)
         ynorm = logp(ypred[i], 1)
         ygold_word = ygold[i]
-        total = total + sum(ygold .* ynorm) # check minus sign before sum()
+        total = total + sum(ygold_word .* ynorm) # check minus sign before sum()
     end
 
     y = total/size(ygold, 1)
@@ -245,7 +259,7 @@ lossgradient = grad(loss)
 function generateYgold(sentence, vocabSize)
     yGold = Any[]
     for i in 1:size(sentence, 1)
-        oneHotVec = zeros(vocabSize, 1)
+        oneHotVec = KnetArray{Float32}(zeros(vocabSize, 1))
         oneHotVec[i] = 1
         push!(yGold, oneHotVec)
     end
@@ -255,24 +269,31 @@ end
 # here x is a single batch of x_batches 
 # size of x is 64
 # Gradient Clipping = 0.1
-function train(weights, input, y, gradient_clip, embeddingMatrix, vocabSize, numHiddenLayers)
+function train(weights, input, y, gradient_clip, embeddingMatrix, vocabSize, numHiddenLayers, embeddingMatrixSize)
     for i in 1:size(input, 1)
-        sentenceLength = size(input, 2)
         # Generate yGold of size vocabSize x number of words in a sentence (size(x,2))
         yGold = generateYgold(y[i], vocabSize)
         
         # Generate X from IDs in sentences and embedding matrix for 0th hidden Layers
         # size = sentenceSize x embeddingMatrixSize
-        sentenceEmbeddings = Any[]
-        for word in 1:sentenceLength
-            embed = embeddingMatrix[word]
-            push!(sentenceEmbeddings, embed)
-        end
+        sentenceEmbeddings = zeros(Float32, size(input[i],1), 1, embeddingMatrixSize)
+        # println(size(input[1],1), 1, embeddingMatrixSize)
+        # for word in 1:size(input, 2)
+        #     embed = embeddingMatrix[input[word]]
+        #     push!(sentenceEmbeddings, embed)
+        # end
+        for j in 1:size(input[i],1)
+            # println(size(embeddingMatrix[input[i][j]]))
+            sentenceEmbeddings[j,1,:] = embeddingMatrix[input[i][j]]
+        end 
 
         # Reshape to make X 4D
-        X = reshape(sentenceEmbeddings, size(sentenceEmbeddings)..., 1)
+        # println(size(sentenceEmbeddings)...)
+        X = KnetArray{Float32}(reshape(sentenceEmbeddings, size(sentenceEmbeddings)..., 1))
+        # println("X size: ", size(X))
 
         # Loss, Gradient Clipping...
+        # println("W size: ", size(weights))
         gloss = lossgradient(weights, X, yGold, numHiddenLayers)
         gnorm = 0
 
@@ -282,7 +303,7 @@ function train(weights, input, y, gradient_clip, embeddingMatrix, vocabSize, num
 
         gnorm = sqrt(gnorm)
         
-        if gnorm > gclip
+        if gnorm > gradient_clip
             for k = 1:size(weights,1)
                 gloss[k] = (gloss[k] * gradient_clip)/gnorm
             end
@@ -298,27 +319,33 @@ end
 
 # here xtst,ytst is a single batch of x_batches 
 # pass Weights from training
-# function accuracy(weights, xtst, ytst, embeddingMatrix, vocabulary, numLayers)
-#     ncorrect = 0
-#     ninstances = 0
-#     for i in size(ytst, 1)
-#         sentenceLength = size(input, 2)
-#         yGold = generateYgold(ytst[i], size(vocabulary))
-#         sentenceEmbeddings = Any[]
-#         for word in 1:sentenceLength
-#             embed = embeddingMatrix[word]
-#             push!(sentenceEmbeddings, embed)
-#         end
-#         X = reshape(sentenceEmbeddings, size(sentenceEmbeddings)..., 1)
-#         ypred = predict(weights, input, numLayers)
-#         for j in 1:size(ytst,2)
-#             ncorrect += sum(y .* (y_pred .== maximum(y_pred,1)))
-#         end
-#         ninstance += size(ytst,2)
-#     end
+function accuracy(weights, xtst, ytst, embeddingMatrix, vocabSize, numLayers, embeddingMatrixSize)
+    ncorrect = 0
+    ninstances = 0
+    for i in 1:size(ytst, 1)
+        yGold = generateYgold(ytst[i], vocabSize)
+        
+        sentenceEmbeddings = zeros(Float32, size(xtst[i],1), 1, embeddingMatrixSize)
+        
+        for j in 1:size(xtst[i], 1)
+            sentenceEmbeddings[j,1,:] = embeddingMatrix[xtst[i][j]]
+        end
+        
+        X = KnetArray{Float32}(reshape(sentenceEmbeddings, size(sentenceEmbeddings)..., 1))
+        
+        # println(size(weights), " ", size(xtst))
+        ypred = predict(weights, X, numLayers)
+        
+        for j in 1:size(ytst[i],1)
+            # println(size(ytst[i]), " ", size(ypred[j]), " ", size(ypred[i]))
+            # (27,) (1,2000) (1,2000)
+            ncorrect += sum(yGold[j] .* (ypred[j] .== maximum(ypred[j], 1)))
+        end
+        ninstances += size(yGold[i], 1)
+    end
 
-#     return ncorrect
-# end
+    return ncorrect, ninstances
+end
 
 # Utility functions
 function printVocab(vocab)
