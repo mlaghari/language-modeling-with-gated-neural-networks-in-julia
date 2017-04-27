@@ -34,14 +34,14 @@ function main(args=ARGS)
 
     # Adding Model GCNN
     w = initWeights(filterWidth, embeddingSize, 0.01, vocabSize)
-    # y = loss(w, x_batches[1][1], y_batches[1][1], numHiddenLayers)
-    # println(size(x_batches, 1))
-    for i in 1:1 #size(x_batches, 1)
+    println(w[1][1][1])
+    for i in 1:1
+        println("Training set: ", i)
         w = train(w, x_batches[i], y_batches[i], gradientClip, embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize)
     end
-    println(size(w))
-    cor, inst = accuracy(w, x_batches[2], y_batches[2], embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize)
-    println(cor, " ", inst, " ", cor/inst)
+    println(w[1][1][1])
+    # cor, inst = accuracy(w, x_batches[1], y_batches[11], embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize)
+    # println(cor, " ", inst, " ", cor/inst)
 
 end
 
@@ -172,10 +172,7 @@ function createBatches(data, batchSize, contextSize, idToWords)
             y_batches[i][j] = y_batches[i][j][1:end-1]
         end
     end
-    # for i in 1:(contextSize+3)
-    #     println(idToWords[x_batches[1][1][i]], " ==> ", idToWords[y_batches[1][1][i]])
-    # end
-    println("Batch config: NumBatches x BatchSize x SentenceLength = ", size(x_batches), " ", size(x_batches[1]), " ", size(x_batches[1][1]))
+    # println("Batch config: NumBatches x BatchSize x SentenceLength = ", size(x_batches), " ", size(x_batches[1]), " ", size(x_batches[1][1]))
     return x_batches, y_batches
 end
 
@@ -205,7 +202,6 @@ end
 function hiddenLayers(weights, inputs)
     conv_w = conv4(weights[1], inputs, padding=(2, 0))
     conv_v = conv4(weights[3], inputs, padding=(2, 0))
-    # println(size(conv_w), " ", size(conv_v))
     out = (conv_w .+ weights[2]) .* sigm(conv_v .+ weights[4])
     return out
 end
@@ -218,12 +214,11 @@ function predict(weights, input, numLayers)
     end
 
     out_reshaped = reshape(out, size(out, 1)*size(out, 2)*size(out, 3), 1, 1, 1)
-    # println(typeof(out_reshaped))
 
     # TODO: fully connected
     sentences = Any[]
     for i in 1:size(out, 1)
-        a = Any[]               # embeddingSize=200
+        a = Any[]
         for j in 0:199          # embeddingSize=200
             a = vcat(a, out_reshaped[1+(j*27)])
         end
@@ -247,7 +242,7 @@ function loss(weights, input, ygold, numLayers)
         total = total + sum(ygold_word .* ynorm) # check minus sign before sum()
     end
 
-    y = total/size(ygold, 1)
+    y = -total/size(ygold, 1)
     return y
 end
 
@@ -277,23 +272,13 @@ function train(weights, input, y, gradient_clip, embeddingMatrix, vocabSize, num
         # Generate X from IDs in sentences and embedding matrix for 0th hidden Layers
         # size = sentenceSize x embeddingMatrixSize
         sentenceEmbeddings = zeros(Float32, size(input[i],1), 1, embeddingMatrixSize)
-        # println(size(input[1],1), 1, embeddingMatrixSize)
-        # for word in 1:size(input, 2)
-        #     embed = embeddingMatrix[input[word]]
-        #     push!(sentenceEmbeddings, embed)
-        # end
         for j in 1:size(input[i],1)
-            # println(size(embeddingMatrix[input[i][j]]))
             sentenceEmbeddings[j,1,:] = embeddingMatrix[input[i][j]]
         end 
-
         # Reshape to make X 4D
-        # println(size(sentenceEmbeddings)...)
         X = KnetArray{Float32}(reshape(sentenceEmbeddings, size(sentenceEmbeddings)..., 1))
-        # println("X size: ", size(X))
 
         # Loss, Gradient Clipping...
-        # println("W size: ", size(weights))
         gloss = lossgradient(weights, X, yGold, numHiddenLayers)
         gnorm = 0
 
@@ -322,7 +307,8 @@ end
 function accuracy(weights, xtst, ytst, embeddingMatrix, vocabSize, numLayers, embeddingMatrixSize)
     ncorrect = 0
     ninstances = 0
-    for i in 1:size(ytst, 1)
+    ncorrectWords = 0
+    for i in 1:size(xtst, 1)
         yGold = generateYgold(ytst[i], vocabSize)
         
         sentenceEmbeddings = zeros(Float32, size(xtst[i],1), 1, embeddingMatrixSize)
@@ -333,15 +319,19 @@ function accuracy(weights, xtst, ytst, embeddingMatrix, vocabSize, numLayers, em
         
         X = KnetArray{Float32}(reshape(sentenceEmbeddings, size(sentenceEmbeddings)..., 1))
         
-        # println(size(weights), " ", size(xtst))
         ypred = predict(weights, X, numLayers)
-        
-        for j in 1:size(ytst[i],1)
-            # println(size(ytst[i]), " ", size(ypred[j]), " ", size(ypred[i]))
-            # (27,) (1,2000) (1,2000)
-            ncorrect += sum(yGold[j] .* (ypred[j] .== maximum(ypred[j], 1)))
+
+        for j in 1:size(xtst[i], 1)
+            ncorrectWords += sum(yGold[j] .* reshape((ypred[j] .== maximum(ypred[j], 2)), 2000, 1))
         end
-        ninstances += size(yGold[i], 1)
+        
+        if ncorrectWords == size(xtst[i], 1)
+            ncorrect += 1
+            ncorrectWords = 0
+        end
+        # break
+        
+        ninstances += size(xtst[i], 2)
     end
 
     return ncorrect, ninstances
