@@ -32,15 +32,18 @@ function main(args=ARGS)
     # Embedding Matrix initialization
     embeddingMatrix = createEmbeddings(sortedIdToWord, embeddingSize)
 
-    # Adding Model GCNN
+    # Initialization
     w = initWeights(filterWidth, embeddingSize, 0.01, vocabSize)
-    println(w[1][1][1])
-    for i in 1:1
+    println(size(x_batches,1)-1)
+    
+    # Training
+    for i in 1:(size(x_batches,1)-1)
         println("Training set: ", i)
         w = train(w, x_batches[i], y_batches[i], gradientClip, embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize)
     end
-    println(w[1][1][1])
-    # cor, inst = accuracy(w, x_batches[1], y_batches[11], embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize)
+
+    # Accuracy
+    # cor, inst = accuracy(w, x_batches[155], y_batches[155], embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize)
     # println(cor, " ", inst, " ", cor/inst)
 
 end
@@ -124,11 +127,6 @@ function indexing(words, wordCounts, nElements)
         end
         push!(data, idx)
     end
-    # println("Indices of self-added tokens")
-    # println(wordToIndex["<pad>"])
-    # println(wordToIndex["<s>"])
-    # println(wordToIndex["</s>"])
-    # println("----------------------------")
     return data, wordToIndex, indexToWord, sortedIndexToWord
 end
 
@@ -136,7 +134,7 @@ end
 function createBatches(data, batchSize, contextSize, idToWords)
     x_batches = Any[]
     y_batches = Any[]
-
+    println(size(data), 1)
     numBatches = length(data) / (batchSize * ((contextSize+4)))
     numBatches = trunc(Int64, numBatches)
     data = data[1:(numBatches * batchSize * ((contextSize+4)))]
@@ -146,9 +144,7 @@ function createBatches(data, batchSize, contextSize, idToWords)
 
     ydata[1:end-1] = xdata[2:end]
     ydata[end] = xdata[1]
-    # for i in 1:(contextSize+4)
-    #     println(xdata[i], " ==> ", ydata[i])
-    # end
+
     start = 0
     iter = 1
     for i in 1:numBatches
@@ -172,7 +168,8 @@ function createBatches(data, batchSize, contextSize, idToWords)
             y_batches[i][j] = y_batches[i][j][1:end-1]
         end
     end
-    # println("Batch config: NumBatches x BatchSize x SentenceLength = ", size(x_batches), " ", size(x_batches[1]), " ", size(x_batches[1][1]))
+    println("Batch config: NumBatches x BatchSize x SentenceLength = ", 
+            size(x_batches,1), "x", size(x_batches[1],1), "x", size(x_batches[1][1],1))
     return x_batches, y_batches
 end
 
@@ -216,11 +213,12 @@ function predict(weights, input, numLayers)
     out_reshaped = reshape(out, size(out, 1)*size(out, 2)*size(out, 3), 1, 1, 1)
 
     # TODO: fully connected
+    # println(size(out, 1)," ",size(out, 2)," ",size(out, 3))
     sentences = Any[]
     for i in 1:size(out, 1)
         a = Any[]
         for j in 0:199          # embeddingSize=200
-            a = vcat(a, out_reshaped[1+(j*27)])
+            a = vcat(a, out_reshaped[1+(j*size(out, 1))])
         end
         a = convert(KnetArray{Float32}, a)
         a = reshape(a, 1, 200)
@@ -243,6 +241,7 @@ function loss(weights, input, ygold, numLayers)
     end
 
     y = -total/size(ygold, 1)
+    println("Perp: ", exp(y))
     return y
 end
 
@@ -264,18 +263,18 @@ end
 # here x is a single batch of x_batches 
 # size of x is 64
 # Gradient Clipping = 0.1
-function train(weights, input, y, gradient_clip, embeddingMatrix, vocabSize, numHiddenLayers, embeddingMatrixSize)
+function train(weights, input, y, gradientClip, embeddingMatrix, vocabSize, numHiddenLayers, embeddingMatrixSize)
     for i in 1:size(input, 1)
         # Generate yGold of size vocabSize x number of words in a sentence (size(x,2))
         yGold = generateYgold(y[i], vocabSize)
         
         # Generate X from IDs in sentences and embedding matrix for 0th hidden Layers
         # size = sentenceSize x embeddingMatrixSize
+        # Reshape to make X 4D
         sentenceEmbeddings = zeros(Float32, size(input[i],1), 1, embeddingMatrixSize)
         for j in 1:size(input[i],1)
             sentenceEmbeddings[j,1,:] = embeddingMatrix[input[i][j]]
         end 
-        # Reshape to make X 4D
         X = KnetArray{Float32}(reshape(sentenceEmbeddings, size(sentenceEmbeddings)..., 1))
 
         # Loss, Gradient Clipping...
@@ -288,12 +287,12 @@ function train(weights, input, y, gradient_clip, embeddingMatrix, vocabSize, num
 
         gnorm = sqrt(gnorm)
         
-        if gnorm > gradient_clip
+        if gnorm > gradientClip
             for k = 1:size(weights,1)
-                gloss[k] = (gloss[k] * gradient_clip)/gnorm
+                gloss[k] = (gloss[k] * gradientClip)/gnorm
             end
         end
-
+        perplexity = 
         params = map(x->Knet.Momentum(), weights)
         for k = 1:size(weights,1)
             update!(weights[k], gloss[k], params[k])
