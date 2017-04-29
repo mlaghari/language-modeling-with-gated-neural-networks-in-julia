@@ -15,12 +15,12 @@ function main(args=ARGS)
     directory = path[1]
     batchSize = 64                                  # Batch size of data while training
     filterHeight = 5                                # Height of the CNN filter
-    contextSize = 20 + trunc(Int64, filterHeight/2) # Length of sentence/context 20=sentence + 2=<s></s> + trunc(Int64, filterHeight/2)
-    vocabSize = 25000                               # change it to 2000 when using complete dataset
-    embeddingSize = 20                              # embedding size of each token
-    filterWidth = 3                                 # Width of the filter
+    contextSize = 38 + trunc(Int64, filterHeight/2) # Length of sentence/context 20=sentence + 2=<s></s> + trunc(Int64, filterHeight/2)
+    vocabSize = 25000                                # change it to 2000 when using complete dataset
+    embeddingSize = 128                             # embedding size of each token
+    filterWidth = 5                                 # Width of the filter
     numHiddenLayers = 13                            # Number of hidden CNN layers
-    gradientClip = 0.1                              # Hyperparameter: Gradient Clipping; pass it to Knet.Momentum()
+    gradientClip = 0.7 #0.9                         # Hyperparameter: Gradient Clipping; pass it to Knet.Momentum()
     learningRate = 1.0                              # Hyperparameter: Learning Rate; pass it to Knet.Momentum()
     winit = 0.01                                    # Used in initWeights() to shrink the size of initialized weights
     
@@ -38,28 +38,27 @@ function main(args=ARGS)
     w = initWeights(filterWidth, embeddingSize, winit, vocabSize)
     w_start = deepcopy(w)
     params = initparams(w, gradientClip, learningRate)
-    println("Initial weights sum: ",sum(w[1]), ", " ,sum(w[3]))
+    # println("Initial weights sum: ",sum(w[1]), ", " ,sum(w[3]))
     
-    perp = perplexity(w, x_batches[154], y_batches[154], numHiddenLayers, embeddingSize, vocabSize, embeddingMatrix)
-    println("Initial Perplexity: ", perp)
-    # println("Initial Perplexity: ", perp)
+    perp = perplexity(w, x_batches[150], y_batches[150], numHiddenLayers, embeddingSize, vocabSize, embeddingMatrix)
+    println("Initial Perplexity without model training: ", perp)
     
     # Training
     for i in 1:size(x_batches,1)-2
-        println("Training set: ", i)
+        # println("Training set: ", i)
         train(w, x_batches[i], y_batches[i], gradientClip, embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize, params)
-        if i % 3 == 1
-            println("Updated Weights Sum: ", sum(w[1]), ", " ,sum(w[3]))
-            perp = perplexity(w, x_batches[i], y_batches[i], numHiddenLayers, embeddingSize, vocabSize, embeddingMatrix)
-            println("Perplexity: ", perp)
-        end        
+        # perp = perplexity(w, x_batches[i], y_batches[i], numHiddenLayers, embeddingSize, vocabSize, embeddingMatrix)
+        # println("Perplexity: ", perp)
+        # if i % 3 == 1
+        #     println("Updated Weights Sum: ", sum(w[1]), ", " ,sum(w[3]))
+        # end        
     end
-    println("Final weights sum: ",sum(w[1]), ", " ,sum(w[3]))
-    println(w .== w_start)
+    # println("Final weights sum: ",sum(w[1]), ", " ,sum(w[3]))
+    # println(w .== w_start)
     
     # Perplexity
-    perp = perplexity(w, x_batches[155], y_batches[155], numHiddenLayers, embeddingSize, vocabSize, embeddingMatrix)
-    println("Initial Perplexity: ", perp)
+    perp = perplexity(w, x_batches[size(x_batches,1)], y_batches[size(x_batches,1)], numHiddenLayers, embeddingSize, vocabSize, embeddingMatrix)
+    println("Final Perplexity: ", perp)
 end
 
 # Creating specialized vocabulary for Google Billion Words. 
@@ -190,7 +189,7 @@ end
 function createEmbeddings(indexToWord, embeddingSize)
     embeddingMatrix = Any[]
     for wordId in keys(indexToWord)
-        embedding = randn(1, embeddingSize)
+        embedding = xavier(1, embeddingSize)
         push!(embeddingMatrix, embedding)
     end
     # println(size(embeddingMatrix)...)
@@ -201,9 +200,9 @@ end
 # h(X) = (X * W + b) .* sigm(X * V + c)
 # W = w[1], b = w[2], V = w[3], c = w[4]
 function initWeights(k, embeddingSize, winit, vocabSize)
-    w = Any[(randn(Float32, k,1,embeddingSize,embeddingSize)*winit), (zeros(Float32, 1,1,embeddingSize,1)),
-            (randn(Float32, k,1,embeddingSize,embeddingSize)*winit), (zeros(Float32, 1,1,embeddingSize,1)),
-            (randn(Float32, embeddingSize,vocabSize)*winit), (zeros(Float32, 1,vocabSize))]
+    w = Any[(xavier(Float32, k,1,embeddingSize,embeddingSize)), (zeros(Float32, 1,1,embeddingSize,1)),
+            (xavier(Float32, k,1,embeddingSize,embeddingSize)), (zeros(Float32, 1,1,embeddingSize,1)),
+            (xavier(Float32, embeddingSize,vocabSize)), (zeros(Float32, 1,vocabSize))]
     return map(t->convert(KnetArray{Float32}, t), w)
 end
 
@@ -217,19 +216,18 @@ end
 
 # Hidden Layers
 function predict(w, input, numLayers, embeddingSize)
-    out = input
     for i in 1:numLayers-1
-        out = hiddenLayers(w, out)
+        input = hiddenLayers(w, input)
     end
 
-    out_reshaped = reshape(out, size(out, 1)*size(out, 2)*size(out, 3), 1, 1, 1)
+    out_reshaped = reshape(input, size(input, 1)*size(input, 2)*size(input, 3), 1, 1, 1)
 
     # TODO: fully connected
     sentences = Any[]
-    for i in 1:size(out, 1)
+    for i in 1:size(input, 1)
         a = Any[]
-        for j in 0:embeddingSize-1          # embeddingSize=200
-            a = vcat(a, out_reshaped[1+(j*size(out, 1))])
+        for j in 0:embeddingSize-1
+            a = vcat(a, out_reshaped[1+(j*size(input, 1))])
         end
         a = convert(KnetArray{Float32}, a)
         a = reshape(a, 1, embeddingSize)
@@ -248,12 +246,13 @@ function loss(w, input, ygold, numLayers, embeddingSize; my=nothing)
     for i in 1:size(ygold, 1)
         ynorm = logp(ypred[i])
         ygold_word = ygold[i]
-        total += sum(ygold_word .* reshape(ynorm, size(ygold_word,1), 1))
+        total += sum(reshape(ygold_word, 1, size(ynorm,2)) .* ynorm)
     end
 
     y = -total/size(ygold, 1)
     count = size(ygold, 1)
-    if my != nothing; my[1]=-total; my[2]=count; end
+    if my != nothing; my[1]=total; my[2]=count; end
+    total = 0
     return y
 end
 
@@ -297,7 +296,7 @@ function train(w, input, y, gradientClip, embeddingMatrix, vocabSize, numHiddenL
         gloss = lossgradient(w, X, yGold, numHiddenLayers, embeddingMatrixSize)
         
         # @show gradcheck(loss, w, X, yGold, numHiddenLayers;verbose=true, atol=0.01)
-        for k = 1:size(w,1)
+        for k = 1:size(w, 1)
             update!(w[k], gloss[k], params[k])
         end
     end
@@ -309,16 +308,18 @@ function perplexity(w, xtst, ytst, numLayers, embeddingMatrixSize, vocabSize, em
     total = zeros(Float32, 2)
     for i in 1:size(xtst, 1)
         yGold = generateYgold(ytst[i], vocabSize)
+        
         sentenceEmbeddings = zeros(Float32, size(xtst[i],1), 1, embeddingMatrixSize)
         for j in 1:size(xtst[i],1)
             sentenceEmbeddings[j,1,:] = embeddingMatrix[xtst[i][j]]
         end 
         X = KnetArray{Float32}(reshape(sentenceEmbeddings, size(sentenceEmbeddings)..., 1))
+        
         loss(w, X, yGold, numLayers, embeddingMatrixSize; my=stats)
         total += stats
     end
-    println(total[1], " , ", total[2])
-    y = total[1]/total[2]
+    println(-total[1], " , ", total[2])
+    y = -total[1]/total[2]
     return exp(y)
 end
 
