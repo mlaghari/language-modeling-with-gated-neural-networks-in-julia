@@ -47,11 +47,6 @@ function main(args=ARGS)
     for i in 1:size(x_batches,1)-2
         # println("Training set: ", i)
         train(w, x_batches[i], y_batches[i], gradientClip, embeddingMatrix, vocabSize, numHiddenLayers, embeddingSize, params)
-        # perp = perplexity(w, x_batches[i], y_batches[i], numHiddenLayers, embeddingSize, vocabSize, embeddingMatrix)
-        # println("Perplexity: ", perp)
-        # if i % 3 == 1
-        #     println("Updated Weights Sum: ", sum(w[1]), ", " ,sum(w[3]))
-        # end        
     end
     # println("Final weights sum: ",sum(w[1]), ", " ,sum(w[3]))
     # println(w .== w_start)
